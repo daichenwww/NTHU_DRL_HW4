@@ -1,15 +1,8 @@
 from osim.env import L2M2019Env
 import time
 from tqdm import tqdm
-# import cv2
 import torch
-from torchvision import transforms
-import gym
 import numpy as np
-import random
-from torch.utils.tensorboard import SummaryWriter
-import datetime
-import os
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
