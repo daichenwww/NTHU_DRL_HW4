@@ -7,10 +7,10 @@ import numpy as np
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 ### SAC
-class ActorNet(torch.nn.Module):
+class ActorNetSAC(torch.nn.Module):
 
     def __init__(self):
-        super(ActorNet, self).__init__()
+        super(ActorNetSAC, self).__init__()
         self.main = torch.nn.Sequential(
             torch.nn.Linear(339, 256),
             torch.nn.ReLU(),
@@ -28,7 +28,7 @@ class ActorNet(torch.nn.Module):
         log_std = torch.clamp(log_std, -20, 2)
         std = log_std.exp()
         # make sure the std is not too small
-        std = torch.clamp(std, 1e-5, 1e-4)
+        std = torch.clamp(std, 1e-4, 1e-3)
         dist = torch.distributions.Normal(mu, std)
         transforms = [torch.distributions.transforms.TanhTransform()]
         dist = torch.distributions.transformed_distribution.TransformedDistribution(dist, transforms)
@@ -36,17 +36,44 @@ class ActorNet(torch.nn.Module):
         # action = mu
         log_prob = dist.log_prob(action).sum(-1)
         log_prob -= (2 * (np.log(2) - action - torch.nn.functional.softplus(-2 * action))).sum(-1) # refers to Open AI Spinning up
+        action = (action + 1) / 2
         return action, log_prob
+
+class ActorNetPPO(torch.nn.Module):
+
+    def __init__(self):
+        super(ActorNetPPO, self).__init__()
+
+        self.main = torch.nn.Sequential(
+            torch.nn.Linear(339, 512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, 256),
+            torch.nn.ReLU(),
+            torch.nn.Linear(256, 22),
+            torch.nn.Tanh()
+            # torch.nn.Sigmoid()
+        )
+
+        self.log_std = torch.nn.Parameter(torch.full((22,), 0.5))
+
+    def forward(self, obs):
+        mean = self.main(obs)
+        std = self.log_std.exp()
+        dist = torch.distributions.Normal(mean, std)
+        action = dist.sample()
+        action = (action + 1) / 2
+        return action
 
 class Agent(object):
 
     def __init__(self):
         self.device = device
-        self.actor = ActorNet().to(self.device)
+        # self.actor = ActorNetSAC().to(self.device)
+        self.actor = ActorNetPPO().to(self.device)
         self.load("109062114_hw4_data")
 
-        self.skip = 4
-        self.skip_count = 4
+        self.skip = 2
+        self.skip_count = self.skip
         self.last_action = [0 for _ in range(22)]
 
     def load(self, path):
@@ -62,25 +89,9 @@ class Agent(object):
         return self.last_action
     
     def choose_action(self, observation):
-        observation = torch.tensor(observation, dtype=torch.float32).to(self.device)
         with torch.no_grad():
             action = self.actor(observation)[0].cpu().numpy()
-        # action range [-1, 1] to [0, 1]
-        action = (action + 1) / 2
-        # print(action)
         return action
-
-    # def extract_features(self, V):
-    #     # Extract features from the observation's v_tgt_field using a pre-trained ResNet18 model
-    #     # 2x11x11 -> 3x11x11
-    #     V = cv2.merge([V[0], V[1], np.zeros_like(V[0])])
-    #     # 3x11x11 -> 3x224x224
-    #     V = cv2.resize(V, (224, 224))
-    #     V = transforms.ToTensor()(V).to(dtype=torch.float32)
-    #     V = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(V)
-    #     V = V.unsqueeze(0)
-    #     V = self.resnet(V.to(self.device))
-    #     return V.cpu().detach().numpy().flatten()
 
     def observation_preprocessing(self, observation):
         # put all the observation into a single vector
@@ -106,6 +117,7 @@ class Agent(object):
         # V = torch.tensor(V, dtype=torch.float32) 
         # V = V.unsqueeze(0) 
         # print(V.shape)  # torch.Size([1097])
+        V = torch.tensor(V, dtype=torch.float32).to(self.device).unsqueeze(0)
         return V
 
 if __name__ == '__main__':
@@ -124,13 +136,7 @@ if __name__ == '__main__':
 
         while True:
             action = agent.act(obs)
-            reward_ = 0
-            for i in range(8):
-                next_obs, reward, done, info = env.step(action)
-                reward_ += reward
-                if done:
-                    break
-            reward = reward_
+            next_obs, reward, done, info = env.step(action)
             obs = next_obs
             episode_reward += reward
             timestep += 1
@@ -145,4 +151,4 @@ if __name__ == '__main__':
             if done:
                 break
 
-        pbar.set_description(f"Episode {episode} reward: {episode_reward}")
+        pbar.set_description(f"Episode {episode} reward: {episode_reward} timestep: {timestep}")
