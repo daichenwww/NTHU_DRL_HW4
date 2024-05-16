@@ -39,37 +39,62 @@ class ActorNetSAC(torch.nn.Module):
         action = (action + 1) / 2
         return action, log_prob
 
-class ActorNetPPO(torch.nn.Module):
+class XYNet(torch.nn.Module):
+    # the first 2*11*11 in obs is the x, y coordinates of the target field
+    def __init__(self):
+        super(XYNet, self).__init__()
+        self.main = torch.nn.Sequential(
+            torch.nn.Linear(2*11*11, 256),
+            torch.nn.Tanh(),
+            torch.nn.Linear(256, 256),
+            torch.nn.Tanh(),
+            torch.nn.Linear(256, 2)
+        )
+
+    def forward(self, obs):
+        return self.main(obs)
+
+class ActorNet(torch.nn.Module):
 
     def __init__(self):
-        super(ActorNetPPO, self).__init__()
+        super(ActorNet, self).__init__()
+
+        self.xy_net = XYNet()
 
         self.main = torch.nn.Sequential(
-            torch.nn.Linear(339, 512),
-            torch.nn.ReLU(),
-            torch.nn.Linear(512, 256),
-            torch.nn.ReLU(),
+            torch.nn.Linear(97+2, 256),
+            torch.nn.Tanh(),
+            torch.nn.Linear(256, 256),
+            torch.nn.Tanh(),
             torch.nn.Linear(256, 22),
-            torch.nn.Tanh()
+            # torch.nn.Tanh()
             # torch.nn.Sigmoid()
         )
 
-        self.log_std = torch.nn.Parameter(torch.full((22,), 0.5))
+        self.log_std = torch.nn.Parameter(torch.zeros(1, 22))
+
+    def make_obs(self, obs):
+        # xy = self.xy_net(obs[:, :2*11*11])
+        xy = torch.zeros(obs.size(0), 2)
+        obs = torch.cat([xy, obs[:, 2*11*11:]], dim=1)
+        return obs
 
     def forward(self, obs):
+        obs = self.make_obs(obs)
         mean = self.main(obs)
-        std = self.log_std.exp()
-        dist = torch.distributions.Normal(mean, std)
-        action = dist.sample()
-        action = (action + 1) / 2
+        # std = self.log_std.exp()
+        # dist = torch.distributions.Normal(mean, std)
+        # action = dist.sample()
+        action = mean
+        # action = (action + 1) / 2
         return action
 
 class Agent(object):
 
     def __init__(self):
-        self.device = device
+        self.device = 'cpu'
         # self.actor = ActorNetSAC().to(self.device)
-        self.actor = ActorNetPPO().to(self.device)
+        self.actor = ActorNet().to(self.device)
         self.load("109062114_hw4_data")
 
         self.skip = 2
@@ -91,6 +116,7 @@ class Agent(object):
     def choose_action(self, observation):
         with torch.no_grad():
             action = self.actor(observation)[0].cpu().numpy()
+        action = np.clip(action, 0, 1)
         return action
 
     def observation_preprocessing(self, observation):
